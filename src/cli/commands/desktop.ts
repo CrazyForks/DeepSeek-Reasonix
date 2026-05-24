@@ -16,15 +16,17 @@ import { pickPrimaryBalance } from "../../client.js";
 import { codeSystemPrompt } from "../../code/prompt.js";
 import { buildCodeToolset } from "../../code/setup.js";
 import {
+  DEFAULT_MODEL,
   type DesktopOpenTab,
   type EditMode,
   isPlausibleKey,
+  isReasoningEffort,
   loadApiKey,
   loadBaseUrl,
   loadDesktopOpenTabs,
   loadEditMode,
   loadEditor,
-  loadPreset,
+  loadModel,
   loadQQConfig,
   loadReasoningEffort,
   loadRecentWorkspaces,
@@ -40,7 +42,7 @@ import {
   saveDesktopOpenTabs,
   saveEditMode,
   saveEditor,
-  savePreset,
+  saveModel,
   saveReasoningEffort,
   saveShowSystemEvents,
   saveSubagentModels,
@@ -83,7 +85,6 @@ import { countTokensBounded } from "../../tokenizer.js";
 import type { ChoiceOption } from "../../tools/choice.js";
 import type { ChatMessage } from "../../types.js";
 import { VERSION } from "../../version.js";
-import { canonicalPresetName, resolvePreset } from "../ui/presets.js";
 import { type McpRuntime, createMcpRuntime } from "./mcp-runtime.js";
 
 export interface DesktopOptions {
@@ -110,12 +111,12 @@ type InMessage = { tabId?: string } & (
   | { cmd: "settings_get" }
   | {
       cmd: "settings_save";
-      reasoningEffort?: "high" | "max";
+      reasoningEffort?: import("../../config.js").ReasoningEffort;
       editMode?: EditMode;
       budgetUsd?: number | null;
       baseUrl?: string;
       workspaceDir?: string;
-      preset?: "flash" | "pro";
+      model?: string;
       editor?: string;
       webSearchEngine?: "bing" | "searxng" | "metaso" | "tavily" | "perplexity" | "exa";
       subagentModels?: Record<string, "flash" | "pro">;
@@ -157,7 +158,7 @@ interface NeedsSetupEvent {
 
 interface SettingsEvent {
   type: "$settings";
-  reasoningEffort: "high" | "max";
+  reasoningEffort: import("../../config.js").ReasoningEffort;
   editMode: EditMode;
   budgetUsd: number | null;
   baseUrl?: string;
@@ -165,7 +166,6 @@ interface SettingsEvent {
   workspaceDir: string;
   recentWorkspaces: string[];
   model: string;
-  preset: "flash" | "pro";
   editor?: string;
   webSearchEngine?: "bing" | "searxng" | "metaso" | "tavily" | "perplexity" | "exa";
   subagentModels?: Record<string, "flash" | "pro">;
@@ -569,7 +569,6 @@ function emitSettings(tab: Tab): void {
       workspaceDir: tab.rootDir,
       recentWorkspaces: recent,
       model: tab.currentModel,
-      preset: tab.currentPreset,
       editor: loadEditor(),
       webSearchEngine: readWebSearchEngine(),
       subagentModels: loadSubagentModels(),
@@ -722,7 +721,11 @@ function emitSkills(tab: Tab): void {
 interface RuntimeState {
   loop: CacheFirstLoop;
   eventizer: Eventizer;
-  ctx: { model: string; prefixHash: string; reasoningEffort: "high" | "max" };
+  ctx: {
+    model: string;
+    prefixHash: string;
+    reasoningEffort: import("../../config.js").ReasoningEffort;
+  };
 }
 
 type SymbolEntry = { name: string; path: string; line: number; kind: string };
@@ -731,7 +734,6 @@ interface Tab {
   readonly id: string;
   rootDir: string;
   currentSession: string;
-  currentPreset: "flash" | "pro";
   currentModel: string;
   budgetUsd: number | undefined;
   /** null while the tab is bootstrapping — see `initTabToolset`. UI gates input on `$ready`, which only fires once this is set. */
@@ -1222,14 +1224,11 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
   function createTabSkeleton(initialDir?: string): Tab {
     const dir = resolve(initialDir ?? opts.dir ?? loadWorkspaceDir() ?? process.cwd());
     pushRecentWorkspace(dir);
-    const preset = canonicalPresetName(loadPreset());
-    const resolved = resolvePreset(preset);
-    const model = opts.model || resolved.model;
+    const model = opts.model || loadModel() || DEFAULT_MODEL;
     const tab: Tab = {
       id: nextTabId(),
       rootDir: dir,
       currentSession: "",
-      currentPreset: preset,
       currentModel: model,
       budgetUsd: opts.budgetUsd,
       toolset: null,
@@ -1254,7 +1253,7 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
     return tab;
   }
 
-  /** Builds the toolset / system prompt / runtime / MCP bridge for a freshly-created skeleton. Reads `tab.currentModel` at call time so preset changes that landed during the wait are honored. */
+  /** Builds the toolset / system prompt / runtime / MCP bridge for a freshly-created skeleton. Reads `tab.currentModel` at call time so model changes during the wait are honored. */
   async function initTabToolset(tab: Tab): Promise<void> {
     const toolset = await buildCodeToolset({
       rootDir: tab.rootDir,
@@ -2182,7 +2181,7 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
     }
     if (msg.cmd === "settings_save") {
       try {
-        if (msg.reasoningEffort !== undefined) {
+        if (msg.reasoningEffort !== undefined && isReasoningEffort(msg.reasoningEffort)) {
           saveReasoningEffort(msg.reasoningEffort);
           tab.runtime?.loop.configure({ reasoningEffort: msg.reasoningEffort });
         }
@@ -2207,19 +2206,18 @@ export async function desktopCommand(opts: DesktopOptions): Promise<void> {
           saveSubagentModels(msg.subagentModels);
           emitSkills(tab);
         }
-        if (msg.preset !== undefined) {
-          tab.currentPreset = canonicalPresetName(msg.preset);
-          const resolved = resolvePreset(tab.currentPreset);
-          tab.currentModel = resolved.model;
-          savePreset(tab.currentPreset);
-          // If the toolset isn't built yet (mid-bootstrap), let initTabToolset
-          // see the updated currentModel and compute system + runtime once.
-          if (tab.toolset) {
-            tab.system = codeSystemPrompt(tab.rootDir, {
-              hasSemanticSearch: tab.toolset.semantic.enabled,
-              modelId: tab.currentModel,
-            });
-            if (tab.runtime) tab.runtime = buildRuntimeFor(tab);
+        if (msg.model !== undefined) {
+          const next = msg.model.trim();
+          if (next) {
+            tab.currentModel = next;
+            saveModel(next);
+            if (tab.toolset) {
+              tab.system = codeSystemPrompt(tab.rootDir, {
+                hasSemanticSearch: tab.toolset.semantic.enabled,
+                modelId: tab.currentModel,
+              });
+              if (tab.runtime) tab.runtime = buildRuntimeFor(tab);
+            }
           }
         }
         emitSettings(tab);

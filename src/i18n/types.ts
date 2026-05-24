@@ -114,13 +114,13 @@ export interface TranslationSchema {
     budgetHint: string;
     modelIdHint: string;
     systemPromptHint: string;
-    presetHint: string;
+    effortHint: string;
     sessionNameHint: string;
     ephemeralHint: string;
     mcpSpecHint: string;
     mcpPrefixHint: string;
     noConfigHint: string;
-    presetHintShort: string;
+    effortHintShort: string;
     budgetHintShort: string;
     transcriptHintShort: string;
     mcpSpecHintShort: string;
@@ -341,7 +341,6 @@ export interface TranslationSchema {
     apiKeyRejected: string;
     apiKeyCheckFailed: string;
     apiKeyPreview: string;
-    presetTitle: string;
     mcpTitle: string;
     mcpUserArgsHint: string;
     mcpFooterMulti: string;
@@ -360,7 +359,6 @@ export interface TranslationSchema {
     reviewTitle: string;
     reviewLabelApiKey: string;
     reviewLabelLanguage: string;
-    reviewLabelPreset: string;
     reviewLabelTheme: string;
     reviewLabelMcp: string;
     reviewMcpNone: string;
@@ -453,7 +451,6 @@ export interface TranslationSchema {
     recordingGlyph: string;
     mb: string;
     evt: string;
-    /** Prefix for the edit-gate mode pill — disambiguates from the preset (`/preset auto` is a different "auto"). */
     editsLabel: string;
     /** Label for the MCP-handshake progress pill (rendered as `⌁ MCP n/m`). */
     mcpLoading: string;
@@ -615,8 +612,9 @@ export interface TranslationSchema {
     loading: string;
     catalogEmpty: string;
     modelsAvailable: string;
-    presetsHeader: string;
+    effortHeader: string;
     modelsHeader: string;
+    effortDesc: Record<string, string>;
     pickerFooter: string;
     currentLabel: string;
   };
@@ -970,7 +968,7 @@ export interface TranslationSchema {
     descNewSession: string;
     descListSessions: string;
     descSwitchModel: string;
-    descSwitchPreset: string;
+    descSwitchEffort: string;
     descSwitchTheme: string;
     descCtrlC: string;
     descEsc: string;
